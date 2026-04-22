@@ -15,30 +15,31 @@
 const int MODE_CONSTANT_PWM = 0;
 const int MODE_LINE_TRACK = 1;
 const int MODE_MISSION_TASK = 2;
-const int MODE_TUNE_TURN_90 = 3;
-const int MODE_TUNE_ROTATE_90 = 4;
 
 // Which mode to run. Change ONLY this constant to switch behavior.
-const int RUN_MODE = 2; // REMEMBER TO SET TO 2 OR MODE_MISSION_TASK!!!!!!!!!!
+const int RUN_MODE = MODE_MISSION_TASK; // SET TO 2 OR MODE_MISSION_TASK!!!
 
-const int DEBUG_START_AT_STAGE = 3; // REMEMBER TO SET TO 3!!!!!!!!!!
+const int DEBUG_START_AT_STAGE = 9; // SET TO 3!!!!!
 // Debug stage stop (mission mode only):
-// 0 = disabled
+// Any value outside 3..18 = disabled
 // N (3..18) = stop completely once stage N is entered
-const int DEBUG_STOP_AT_STAGE = 19; // REMEMBER TO SET TO 19!!!!!!!!!!
+const int DEBUG_STOP_AT_STAGE = 19; // SET TO 19!!!
 
-// Three effective power levels: stop / half / full
-const float POWER_STOP = 0.0; // stop
-const float POWER_HALF = 0.55;  // half
-const float POWER_FULL = 0.75;  // full
-const float POWER_MAX = 1.0;
+// Six effective power levels only: stop / quarter / half low / half / full / max
+const float POWER_STOP = 0.0;
+const float POWER_QUARTER = 0.35; // quarter
+const float POWER_QUARTER_HIGH = 0.4; // quarter high
+const float POWER_HALF_LOW = 0.5; // half low
+const float POWER_HALF = 0.65;  // half
+const float POWER_FULL = 0.8;  // full
+const float POWER_MAX = 1.0; // max
 
-// Constant test mode power (use any defined POWER_* level)
+// Constant test mode power (choose from POWER_* levels above)
 const float CONSTANT_MODE_POWER = POWER_FULL;
 
 // Right motor compensation multiplier (right is slower, so boost its PWM).
 // Right PWM = left PWM * RIGHT_PWM_MULTIPLIER when both are commanded at same power.
-const float RIGHT_PWM_MULTIPLIER = 1; // 1.054;
+const float RIGHT_PWM_MULTIPLIER = 1.054;
 
 // Auto-computed max safe left PWM from multiplier (floor so right never exceeds 255).
 const int MAX_LEFT_PWM = (int)(255.0 / RIGHT_PWM_MULTIPLIER);
@@ -53,24 +54,24 @@ const float MISSION_TIME_MULTIPLIER = 1.0;
 // - So duration/condition arrays are interval-based (indexed by currentState).
 // Relative mission interval durations in ms (base time before multiplying by MISSION_TIME_MULTIPLIER)
 // Each interval advances only after min duration; it is forced to advance at max duration.
-// Keep windows narrow: max - min <= 1 s.
+// Keep windows narrow: max - min <= 500 ms.
 const unsigned long INTERVAL_MIN_DURATION_MS[19] = {
   0,
   0,   // 1 (startup-handled)
   0,   // 2 (startup-handled)
-  1200,  // 3
+  1400,  // 3
   2300,  // 4
-  5000,  // 5
-  1200,  // 6
+  4500,  // 5
+  1400,  // 6
   950,  // 7 (self-rotation only)
-  800,  // 8 (post-self-rotation causes variation)
-  9200,   // 9  (retuned after slow->half mapping)
-  700,  // 10
-  900,   // 11
+  1200,  // 8 (post-self-rotation causes variation)
+  8500,   // 9  (retuned after slow->half mapping)
+  500,  // 10
+  800,   // 11
   1200,   // 12
   2600,   // 13
-  3000,   // 14 (retuned after slow->half mapping)
-  2600,   // 15
+  900,   // 14 (retuned after slow->half mapping)
+  1300,   // 15
   1400,  // 16
   700,  // 17
   1100   // 18
@@ -80,19 +81,19 @@ const unsigned long INTERVAL_MAX_DURATION_MS[19] = {
   0,
   0,   // 1 (startup-handled)
   0,  // 2 (startup-handled)
-  1700,  // 3
-  2800,  // 4
-  5700,  // 5
-  1800,  // 6
-  1100,  // 7 (self-rotation only)
-  1400,  // 8 (post-self-rotation causes variation)
-  10000,   // 9  (retuned after slow->half mapping)
-  900,  // 10
-  1100,  // 11
-  1500,  // 12
-  3100,  // 13
-  4000,   // 14 (retuned after slow->half mapping)
-  3100,  // 15
+  2000,  // 3
+  3200,  // 4
+  6000,  // 5
+  2000,  // 6
+  1050,  // 7 (self-rotation only)
+  1800,  // 8 (post-self-rotation causes variation)
+  13000,   // 9  (retuned after slow->half mapping)
+  1000,  // 10
+  1200,  // 11
+  1400,  // 12
+  3000,  // 13
+  1100,   // 14 (retuned after slow->half mapping)
+  1600,  // 15
   1800,  // 16
   900,  // 17
   1300   // 18
@@ -129,7 +130,7 @@ const int ACT_BACKWARD_FAST = 3;
 // Per-state transition condition (checked after min duration; forced by max duration)
 const int COND_TIME_ONLY = 0;
 const int COND_CENTER_ON_WHITE = 1;
-const int COND_JUNCTION_WHITE = 2;
+const int COND_JUNCTION_WHITE = 2;  // use left and right sensors only, ignore center (requested junction condition)
 const int COND_BUMPER_ON_WHITE = 3;
 
 // Stage-entry turn hint (used at the beginning of selected stages)
@@ -137,49 +138,12 @@ const int TURN_NONE = 0;
 const int TURN_LEFT = -1;
 const int TURN_RIGHT = 1;
 
-// ========================= FIXED 90-DEGREE ACTIONS (FULLY TUNABLE) =========================
-// 1) Turn 90 left  (fixed-radius arc)
-// 2) Turn 90 right (fixed-radius arc)
-// 3) Rotate 90 left  (self-rotation)
-// 4) Rotate 90 right (self-rotation)
-const int FIX_ACT_NONE = 0;
-const int FIX_ACT_TURN_LEFT_90 = 1;
-const int FIX_ACT_TURN_RIGHT_90 = 2;
-const int FIX_ACT_ROTATE_LEFT_90 = 3;
-const int FIX_ACT_ROTATE_RIGHT_90 = 4;
+// Time for entry turn bias at stage start (before normal line tracking resumes)
+const unsigned long ENTRY_TURN_DURATION_MS = 160;
+const unsigned long ENTRY_TURN_DURATION_LONG_MS = 240;
 
-// Arc-turn (fixed radius) tuning
-const float FIX_TURN_LEFT_90_INNER_POWER = POWER_STOP;
-const float FIX_TURN_LEFT_90_OUTER_POWER = POWER_FULL;
-const unsigned long FIX_TURN_LEFT_90_DURATION_MS = 220;
-
-const float FIX_TURN_RIGHT_90_INNER_POWER = POWER_STOP;
-const float FIX_TURN_RIGHT_90_OUTER_POWER = POWER_FULL;
-const unsigned long FIX_TURN_RIGHT_90_DURATION_MS = 220;
-
-// Self-rotation 90 tuning
-const float FIX_ROTATE_LEFT_90_POWER = POWER_FULL;
-const unsigned long FIX_ROTATE_LEFT_90_DURATION_MS = 220;
-
-const float FIX_ROTATE_RIGHT_90_POWER = POWER_FULL;
-const unsigned long FIX_ROTATE_RIGHT_90_DURATION_MS = 220;
-
-// Self-rotation centering correction:
-// after detection, move straight briefly so wheel-center aligns before rotating
-const unsigned long FIX_ROTATE_CENTERING_FORWARD_MS = 50;
-const float FIX_ROTATE_CENTERING_FORWARD_POWER = POWER_HALF;
-
-// Tuning mode sequence length: 4 left + 4 right
-const int TUNING_REPEAT_COUNT = 4;
-
-// Stage 7 replacement: 4 x self-rotate right 90
-const int STAGE7_ROTATE_90_COUNT = 4;
-
-// Startup / debounce timing (tunable)
-const unsigned long START_LINE_CONFIRM_MS = 120;
-const unsigned long BOOT_SETTLE_DELAY_MS = 300;
-const unsigned long START_TRIGGER_DEBOUNCE_MS = 120;
-const unsigned long STAGE17_BUMPER_DEBOUNCE_MS = 80;
+// After forced stage-entry turn ends, temporarily force straight driving.
+const unsigned long POST_FORCED_TURN_DISTRACT_BLOCK_MS = 150;
 
 const int STATE_ACTION[19] = {
   ACT_STOP,
@@ -203,52 +167,32 @@ const int STATE_ACTION[19] = {
   ACT_STOP                // 18
 };
 
-// Fixed actions to run at the beginning of selected stages (ACT_LINE_TRACK stages)
-const int ENTRY_FIXED_ACTION_TYPE[19] = {
-  FIX_ACT_NONE,
-  FIX_ACT_NONE,            // 1
-  FIX_ACT_NONE,            // 2
-  FIX_ACT_NONE,            // 3
-  FIX_ACT_TURN_LEFT_90,    // 4
-  FIX_ACT_TURN_RIGHT_90,   // 5
-  FIX_ACT_TURN_LEFT_90,    // 6
-  FIX_ACT_NONE,            // 7 (handled by ACT_SPIN_360_RIGHT replacement)
-  FIX_ACT_ROTATE_LEFT_90,  // 8
-  FIX_ACT_NONE,            // 9
-  FIX_ACT_NONE,            // 10
-  FIX_ACT_TURN_LEFT_90,    // 11
-  FIX_ACT_TURN_RIGHT_90,   // 12
-  FIX_ACT_ROTATE_LEFT_90,  // 13
-  FIX_ACT_ROTATE_LEFT_90,  // 14
-  FIX_ACT_ROTATE_LEFT_90,  // 15
-  FIX_ACT_ROTATE_LEFT_90,  // 16
-  FIX_ACT_NONE,            // 17
-  FIX_ACT_NONE             // 18
-};
-
-const int ENTRY_FIXED_ACTION_COUNT[19] = {
-  0,
-  0,  // 1
-  0,  // 2
-  0,  // 3
-  2,  // 4  : 2 x turn left 90
-  2,  // 5  : 2 x turn right 90
-  1,  // 6  : 1 x turn left 90
-  0,  // 7
-  1,  // 8  : 1 x self-rotate left 90
-  0,  // 9
-  0,  // 10
-  1,  // 11 : 1 x turn left 90
-  1,  // 12 : 1 x turn right 90
-  1,  // 13 : 1 x self-rotate left 90
-  1,  // 14 : 1 x self-rotate left 90
-  1,  // 15 : 1 x self-rotate left 90
-  1,  // 16 : 1 x self-rotate left 90
-  0,  // 17
-  0   // 18
+// Stage-beginning transition decision (from map):
+// 4:L, 5:R, 6:L, 9:L, 11:R, 12:L, 13:L, 14:L, 15:R, 16:L
+const int STAGE_ENTRY_TURN[19] = {
+  TURN_NONE,
+  TURN_NONE,   // 1
+  TURN_NONE,   // 2
+  TURN_NONE,   // 3
+  TURN_LEFT,   // 4
+  TURN_RIGHT,  // 5
+  TURN_LEFT,   // 6
+  TURN_NONE,   // 7 (dedicated 360 action)
+  TURN_NONE,   // 8 (line tracking only)
+  TURN_LEFT,   // 9 (begin with left turn)
+  TURN_NONE,   // 10
+  TURN_RIGHT,  // 11
+  TURN_LEFT,   // 12
+  TURN_LEFT,   // 13
+  TURN_LEFT,   // 14
+  TURN_RIGHT,  // 15
+  TURN_LEFT,   // 16
+  TURN_NONE,   // 17 (custom bumper/backward logic)
+  TURN_NONE    // 18
 };
 
 // Interval transition conditions derived from the map's distraction/junction points.
+// For COND_JUNCTION_WHITE, decision uses left+right both white (center ignored).
 // Index N corresponds to interval [N -> N+1].
 const int INTERVAL_TRANSITION_CONDITION[19] = {
   COND_TIME_ONLY,
@@ -258,7 +202,7 @@ const int INTERVAL_TRANSITION_CONDITION[19] = {
   COND_JUNCTION_WHITE,   // 4 -> arrive 5
   COND_JUNCTION_WHITE,   // 5 -> arrive 6
   COND_JUNCTION_WHITE,   // 6 -> arrive 7
-  COND_TIME_ONLY,        // 7 (fixed 4x90 self-rotation)
+  COND_JUNCTION_WHITE,   // 7 (self-rotation)
   COND_JUNCTION_WHITE,   // 8 -> arrive 9
   COND_TIME_ONLY,        // 9
   COND_JUNCTION_WHITE,   // 10 -> arrive 11
@@ -293,26 +237,25 @@ int bumperSensor = 1;  // 1 = dark, 0 = white (reserved for start/end marker)
 int centerSensor = 1;  // 1 = dark, 0 = white
 int rightSensor = 1;   // 1 = dark, 0 = white
 
-int currentState = 0;   // active interval start point: interval [currentState -> currentState+1], starts at 3
+int currentState = 0;   // mission interval index [currentState -> currentState+1]; set to 3 when mission starts
 
 // line-lost recovery memory: -1 = last correction to left, 1 = right, 0 = none
 int lastTurn = 0;
 
-// start gate: all modes stay stopped until bumper state toggles once from boot state
+// start gate: all modes stay stopped until start-line arming is done, then bumper toggles from baseline
 int bumperBootState = 1;
 bool hasStarted = false;
 bool startLineArmed = false;
 unsigned long startLineSeenSinceMs = 0;
+
+// Require stable placement on start white line before accepting bumper toggle
+const unsigned long START_LINE_CONFIRM_MS = 120;
 
 bool missionStateStarted = false;
 unsigned long missionStateStartMs = 0;
 int lastMissionState = 0;
 bool stage17BumperTriggered = false;
 bool debugStageStopActive = false;
-
-int tuningStepIndex = 0;
-unsigned long tuningStepStartMs = 0;
-int tuningModeLatched = -1;
 
 float clampPower(float p)
 {
@@ -325,10 +268,10 @@ int readBinaryStable(int pin)
 {
   // majority vote over 3 reads for binary sensors (0/1)
   int s1 = digitalRead(pin);
-  // int s2 = digitalRead(pin);
-  // int s3 = digitalRead(pin);
-  int sum = s1; // s1 + s2 + s3;
-  return sum; // (sum >= 2) ? 1 : 0;
+  int s2 = digitalRead(pin);
+  int s3 = digitalRead(pin);
+  int sum = s1 + s2 + s3;
+  return (sum >= 2) ? 1 : 0;
 }
 
 unsigned long scaledDurationMs(unsigned long baseMs)
@@ -363,13 +306,24 @@ float getMissionCruisePower(int intervalState)
 {
   // Default interval speed is fast.
   // Requested exceptions:
-  // - between 5 and 6   => interval state 5 => half
-  // - between 9 and 10  => interval state 9 => half
+  // - between 5 and 6  => interval state 5 => half
+  // - between 9 and 10 => interval state 9 => half low
   // - between 14 and 15 => interval state 14 => half
   if (intervalState == 5) return POWER_HALF;
-  if (intervalState == 9) return POWER_HALF;
+  if (intervalState == 9) return POWER_HALF_LOW;
   if (intervalState == 14) return POWER_HALF;
   return POWER_FULL;
+}
+
+unsigned long getEntryTurnDurationMs(int state)
+{
+  // Keep 150 ms for stages 4, 5, 6, 11, 12.
+  if (state == 4 || state == 5 || state == 6 || state == 11 || state == 12) {
+    return ENTRY_TURN_DURATION_MS;
+  }
+
+  // Remaining stages that need stage-entry turning use longer turning.
+  return ENTRY_TURN_DURATION_LONG_MS;
 }
 
 void setForwardDirection()
@@ -386,172 +340,149 @@ void setBackwardDirection()
 
 void setWheelPower(float leftPower, float rightPower)
 {
-  // Each power is continuous in [0.0, 1.0].
+  // Each power is a normalized command in [0.0, 1.0].
   // Right side uses multiplier-scaled range.
   float leftCmd = clampPower(leftPower);
   float rightCmd = clampPower(rightPower);
 
   int left = (int)(leftCmd * MAX_LEFT_PWM + 0.5);
   int right = (int)(rightCmd * MAX_LEFT_PWM * RIGHT_PWM_MULTIPLIER + 0.5);
-
+  
   if (left < 0) left = 0;
   if (left > MAX_LEFT_PWM) left = MAX_LEFT_PWM;
   if (right < 0) right = 0;
   if (right > 255) right = 255;
-
+  
   analogWrite(pinL_PWM, left);
   analogWrite(pinR_PWM, right);
 }
 
-void setSteerLeftForCruise(float cruisePower)
+void applyDirectionalCommandWithStability(int leftDir, int rightDir, bool stabilize)
 {
-  // Hard steering with bounded inside-wheel power.
-  digitalWrite(pinL_DIR, LOW);
-  digitalWrite(pinR_DIR, HIGH);
-  setWheelPower(cruisePower <= POWER_HALF ? POWER_HALF : POWER_STOP, cruisePower);
-}
-
-void setSteerRightForCruise(float cruisePower)
-{
-  // Hard steering with bounded inside-wheel power.
-  digitalWrite(pinL_DIR, HIGH);
-  digitalWrite(pinR_DIR, LOW);
-  setWheelPower(cruisePower, cruisePower <= POWER_HALF ? POWER_HALF : POWER_STOP);
-}
-
-unsigned long getFixedActionDurationMs(int actionType)
-{
-  if (actionType == FIX_ACT_TURN_LEFT_90) return FIX_TURN_LEFT_90_DURATION_MS;
-  if (actionType == FIX_ACT_TURN_RIGHT_90) return FIX_TURN_RIGHT_90_DURATION_MS;
-  if (actionType == FIX_ACT_ROTATE_LEFT_90) return FIX_ROTATE_LEFT_90_DURATION_MS;
-  if (actionType == FIX_ACT_ROTATE_RIGHT_90) return FIX_ROTATE_RIGHT_90_DURATION_MS;
-  return 0;
-}
-
-bool isSelfRotateActionType(int actionType)
-{
-  return (actionType == FIX_ACT_ROTATE_LEFT_90 || actionType == FIX_ACT_ROTATE_RIGHT_90);
-}
-
-void applyFixedActionCommand(int actionType)
-{
-  if (actionType == FIX_ACT_TURN_LEFT_90) {
-    // Fixed-radius left arc: both forward, right wheel faster
-    setForwardDirection();
-    setWheelPower(FIX_TURN_LEFT_90_INNER_POWER, FIX_TURN_LEFT_90_OUTER_POWER);
-    lastTurn = -1;
-    return;
-  }
-
-  if (actionType == FIX_ACT_TURN_RIGHT_90) {
-    // Fixed-radius right arc: both forward, left wheel faster
-    setForwardDirection();
-    setWheelPower(FIX_TURN_RIGHT_90_OUTER_POWER, FIX_TURN_RIGHT_90_INNER_POWER);
-    lastTurn = 1;
-    return;
-  }
-
-  if (actionType == FIX_ACT_ROTATE_LEFT_90) {
-    // Self-rotation left 90: left backward, right forward
-    digitalWrite(pinL_DIR, LOW);
-    digitalWrite(pinR_DIR, HIGH);
-    setWheelPower(FIX_ROTATE_LEFT_90_POWER, FIX_ROTATE_LEFT_90_POWER);
-    lastTurn = -1;
-    return;
-  }
-
-  if (actionType == FIX_ACT_ROTATE_RIGHT_90) {
-    // Self-rotation right 90: left forward, right backward
+  if (stabilize) {
+    // Stability trick: precharge both direction lines HIGH, then apply target directions.
     digitalWrite(pinL_DIR, HIGH);
-    digitalWrite(pinR_DIR, LOW);
-    setWheelPower(FIX_ROTATE_RIGHT_90_POWER, FIX_ROTATE_RIGHT_90_POWER);
-    lastTurn = 1;
-    return;
+    digitalWrite(pinR_DIR, HIGH);
+    digitalWrite(pinL_DIR, leftDir);
+    digitalWrite(pinR_DIR, rightDir);
   }
-
-  setForwardDirection();
-  setWheelPower(POWER_STOP, POWER_STOP);
+  else {
+    // No stability mode: apply target directions twice.
+    digitalWrite(pinL_DIR, leftDir);
+    digitalWrite(pinR_DIR, rightDir);
+    digitalWrite(pinL_DIR, leftDir);
+    digitalWrite(pinR_DIR, rightDir);
+  }
 }
 
-bool runFixedActionSequence(int actionType, int actionCount, unsigned long elapsedInState)
+void setSteerLeftForCruise(float cruisePower, bool stabilize)
 {
-  if (actionType == FIX_ACT_NONE || actionCount <= 0) {
-    return false;
-  }
+  // Steering rule:
+  // - cruise >= POWER_FULL: left wheel backward uses POWER_QUARTER.
+  // - cruise >= POWER_HALF_LOW (but < POWER_FULL): left wheel backward uses POWER_MAX.
+  // - otherwise: left wheel backward stays stopped.
+  float backwardPower = (cruisePower >= POWER_FULL) ? POWER_QUARTER : (cruisePower >= POWER_HALF_LOW) ? POWER_HALF_LOW : POWER_STOP;
 
-  unsigned long actionDur = scaledDurationMs(getFixedActionDurationMs(actionType));
-  unsigned long preForwardDur = 0;
-  if (isSelfRotateActionType(actionType)) {
-    preForwardDur = scaledDurationMs(FIX_ROTATE_CENTERING_FORWARD_MS);
-  }
-
-  unsigned long totalDur = preForwardDur + actionDur * (unsigned long)actionCount;
-  if (elapsedInState >= totalDur) {
-    return false;
-  }
-
-  // Self-rotation centering correction (once before the sequence)
-  if (preForwardDur > 0 && elapsedInState < preForwardDur) {
-    setForwardDirection();
-    setWheelPower(FIX_ROTATE_CENTERING_FORWARD_POWER, FIX_ROTATE_CENTERING_FORWARD_POWER);
-    return true;
-  }
-
-  applyFixedActionCommand(actionType);
-  return true;
+  applyDirectionalCommandWithStability(LOW, HIGH, stabilize);
+  setWheelPower(backwardPower, cruisePower);
 }
 
-void runFixedActionTuningMode(int firstActionType, int secondActionType)
+void setSteerRightForCruise(float cruisePower, bool stabilize)
 {
-  if (tuningModeLatched != RUN_MODE) {
-    tuningModeLatched = RUN_MODE;
-    tuningStepIndex = 0;
-    tuningStepStartMs = millis();
-  }
+  // Steering rule:
+  // - cruise >= POWER_FULL: right wheel backward uses POWER_QUARTER.
+  // - cruise >= POWER_HALF_LOW (but < POWER_FULL): right wheel backward uses POWER_MAX.
+  // - otherwise: right wheel backward stays stopped.
+  float backwardPower = (cruisePower >= POWER_FULL) ? POWER_QUARTER : (cruisePower >= POWER_HALF_LOW) ? POWER_HALF_LOW : POWER_STOP;
 
-  int currentAction = (tuningStepIndex < TUNING_REPEAT_COUNT) ? firstActionType : secondActionType;
-  unsigned long elapsed = millis() - tuningStepStartMs;
-
-  if (!runFixedActionSequence(currentAction, 1, elapsed)) {
-    tuningStepIndex = tuningStepIndex + 1;
-    if (tuningStepIndex >= TUNING_REPEAT_COUNT * 2) {
-      tuningStepIndex = 0;
-    }
-    tuningStepStartMs = millis();
-  }
+  applyDirectionalCommandWithStability(HIGH, LOW, stabilize);
+  setWheelPower(cruisePower, backwardPower);
 }
 
-void runLineTrackSimple(float cruisePower)
+void setEntryTurnLeftAggressive(bool stabilize)
+{
+  // Aggressive stage-entry pivot for explicit decision points:
+  // left wheel backward + right wheel forward
+  applyDirectionalCommandWithStability(LOW, HIGH, false);
+  setWheelPower(POWER_FULL, POWER_MAX);
+}
+
+void setEntryTurnRightAggressive(bool stabilize)
+{
+  // Aggressive stage-entry pivot for explicit decision points:
+  // left wheel forward + right wheel backward
+  applyDirectionalCommandWithStability(HIGH, LOW, false);
+  setWheelPower(POWER_MAX, POWER_FULL);
+}
+
+void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAfterTurn, bool stabilize)
 {
   refreshTrackingSensors();
 
-  int steerTurn = TURN_NONE;
-  if (leftSensor == 0 && rightSensor == 1) {
-    steerTurn = TURN_LEFT;
-  }
-  else if (leftSensor == 1 && rightSensor == 0) {
-    steerTurn = TURN_RIGHT;
-  }
-  else if (centerSensor != 0) {
-    // line-lost recovery direction when center is dark and no side preference
-    if (lastTurn < 0) steerTurn = TURN_LEFT;
-    else if (lastTurn > 0) steerTurn = TURN_RIGHT;
-  }
-
-  if (steerTurn == TURN_LEFT) {
-    setSteerLeftForCruise(cruisePower);
+  // Optional forced entry-turn for mission decision points.
+  // This keeps mode1 and mode2 on the same tracking function.
+  if (forcedTurn == TURN_LEFT) {
+    setEntryTurnLeftAggressive(stabilize);
     lastTurn = -1;
     return;
   }
-
-  if (steerTurn == TURN_RIGHT) {
-    setSteerRightForCruise(cruisePower);
+  if (forcedTurn == TURN_RIGHT) {
+    setEntryTurnRightAggressive(stabilize);
     lastTurn = 1;
     return;
   }
 
-  setForwardDirection();
-  setWheelPower(cruisePower, cruisePower);
+  // After forced turn ends, keep going straight for a short window.
+  if (forceStraightAfterTurn) {
+    setForwardDirection();
+    setForwardDirection();
+    setWheelPower(cruisePower, cruisePower);
+    return;
+  }
+
+  // 0 = white line, 1 = dark background
+  if (centerSensor == 0) {
+    if (leftSensor == 0 && rightSensor == 1) {
+      setSteerLeftForCruise(cruisePower, stabilize);
+      lastTurn = -1;
+    }
+    else if (leftSensor == 1 && rightSensor == 0) {
+      setSteerRightForCruise(cruisePower, stabilize);
+      lastTurn = 1;
+    }
+    else {
+      setForwardDirection();
+      setForwardDirection();
+      setWheelPower(cruisePower, cruisePower);
+      // keep lastTurn memory while centered to avoid introducing turn bias
+    }
+  }
+  else {
+    if (leftSensor == 0 && rightSensor == 1) {
+      setSteerLeftForCruise(cruisePower, stabilize);
+      lastTurn = -1;
+    }
+    else if (leftSensor == 1 && rightSensor == 0) {
+      setSteerRightForCruise(cruisePower, stabilize);
+      lastTurn = 1;
+    }
+    else {
+      // search by last known direction using cruise-dependent steering rule
+      // if lastTurn is unknown (0), do neutral forward probing first
+      if (lastTurn < 0) {
+        setSteerLeftForCruise(cruisePower, stabilize);
+      }
+      else if (lastTurn > 0) {
+        setSteerRightForCruise(cruisePower, stabilize);
+      }
+      else {
+        // startup/unknown case: avoid hard left bias, keep tracking forward
+        setForwardDirection();
+        setForwardDirection();
+        setWheelPower(cruisePower, cruisePower);
+      }
+    }
+  }
 }
 
 bool transitionConditionMet(int state)
@@ -615,32 +546,37 @@ void runMissionMode()
   }
   else if (action == ACT_LINE_TRACK) {
     float cruise = getMissionCruisePower(currentState);
-    int entryActionType = ENTRY_FIXED_ACTION_TYPE[currentState];
-    int entryActionCount = ENTRY_FIXED_ACTION_COUNT[currentState];
+    int entryTurn = STAGE_ENTRY_TURN[currentState];
+    unsigned long entryTurnDur = scaledDurationMs(getEntryTurnDurationMs(currentState));
+    unsigned long distractBlockDur = scaledDurationMs(POST_FORCED_TURN_DISTRACT_BLOCK_MS);
+    bool stabilize = (elapsedInState < entryTurnDur || (currentState != 5 && currentState != 9 && currentState != 14));
 
-    // Execute fixed entry action(s) first; then continue normal line tracking.
-    if (!runFixedActionSequence(entryActionType, entryActionCount, elapsedInState)) {
-      runLineTrackSimple(cruise);
+    int forcedTurn = TURN_NONE;
+    if (entryTurn != TURN_NONE && elapsedInState < entryTurnDur) {
+      forcedTurn = entryTurn;
     }
+
+    bool forceStraightAfterTurn = (entryTurn != TURN_NONE && elapsedInState >= entryTurnDur && elapsedInState < (entryTurnDur + distractBlockDur));
+
+    runLineTrackSimple(cruise, forcedTurn, forceStraightAfterTurn, stabilize);
   }
   else if (action == ACT_SPIN_360_RIGHT) {
-    // Stage 7: replace 360 spin with 4 x 90-degree self-rotation (right)
-    if (!runFixedActionSequence(FIX_ACT_ROTATE_RIGHT_90, STAGE7_ROTATE_90_COUNT, elapsedInState)) {
-      setForwardDirection();
-      setWheelPower(POWER_STOP, POWER_STOP);
-    }
+    digitalWrite(pinL_DIR, HIGH);
+    digitalWrite(pinR_DIR, LOW);
+    setWheelPower(POWER_MAX, POWER_MAX);   // rotation always full
+    lastTurn = 1;
   }
   else if (action == ACT_BACKWARD_FAST) {
     // Stage 17 custom sequence:
-    // - before bumper trigger: keep moving forward
+    // - before bumper trigger: keep line-tracking forward
     // - after bumper trigger: go backward until stage-18 white line is detected
     if (!stage17BumperTriggered) {
       setForwardDirection();
-      runLineTrackSimple(POWER_FULL);
+      runLineTrackSimple(POWER_FULL, TURN_NONE, false, true);
       bumperSensor = readBinaryStable(pinB_Sensor);
       if (bumperSensor == 0) {
         stage17BumperTriggered = true;
-        delay(scaledDurationMs(STAGE17_BUMPER_DEBOUNCE_MS));
+        delay(80);
       }
     } else {
       setBackwardDirection();
@@ -711,9 +647,9 @@ void setup ()
   setForwardDirection();
   setWheelPower(0.0, 0.0);
 
-  // record bumper state at boot; run begins only after this state toggles once
+  // record bumper baseline at boot (later compared after start-line arming)
   bumperBootState = readBinaryStable(pinB_Sensor);
-  delay(scaledDurationMs(BOOT_SETTLE_DELAY_MS));
+  delay(300);
 }
 
 // the loop function runs over and over again forever
@@ -732,7 +668,7 @@ void loop() {
         if (startLineSeenSinceMs == 0) {
           startLineSeenSinceMs = millis();
         }
-        if ((millis() - startLineSeenSinceMs) >= scaledDurationMs(START_LINE_CONFIRM_MS)) {
+        if ((millis() - startLineSeenSinceMs) >= START_LINE_CONFIRM_MS) {
           startLineArmed = true;
           // capture bumper baseline at arming moment
           bumperBootState = readBinaryStable(pinB_Sensor);
@@ -747,7 +683,7 @@ void loop() {
     bumperSensor = readBinaryStable(pinB_Sensor);
     if (bumperSensor != bumperBootState) {
       hasStarted = true;
-      delay(scaledDurationMs(START_TRIGGER_DEBOUNCE_MS));  // debounce/settle after start trigger
+      delay(120);  // debounce/settle after start trigger
     }
     return;
   }
@@ -762,7 +698,7 @@ void loop() {
   // mode 1: simple line tracking
   if (RUN_MODE == MODE_LINE_TRACK) {
     setForwardDirection();
-    runLineTrackSimple(POWER_FULL);
+    runLineTrackSimple(POWER_FULL, TURN_NONE, false, true);
     return;
   }
 
@@ -772,20 +708,7 @@ void loop() {
     return;
   }
 
-  // mode 3: tuning mode (turn 90 left x4, then turn 90 right x4, repeat)
-  if (RUN_MODE == MODE_TUNE_TURN_90) {
-    runFixedActionTuningMode(FIX_ACT_TURN_LEFT_90, FIX_ACT_TURN_RIGHT_90);
-    return;
-  }
-
-  // mode 4: tuning mode (self-rotate left 90 x4, then self-rotate right 90 x4, repeat)
-  if (RUN_MODE == MODE_TUNE_ROTATE_90) {
-    runFixedActionTuningMode(FIX_ACT_ROTATE_LEFT_90, FIX_ACT_ROTATE_RIGHT_90);
-    return;
-  }
-
   // safety fallback
   setForwardDirection();
   setWheelPower(POWER_STOP, POWER_STOP);
 }
-
