@@ -132,7 +132,8 @@ const int COND_TIME_ONLY = 0;
 const int COND_CENTER_ON_WHITE = 1;
 const int COND_JUNCTION_WHITE = 2;  // use left and right sensors only, ignore center (requested junction condition)
 const int COND_BUMPER_ON_WHITE = 3;
-const int COND_STAGE9_TO_11_WHITE_PATTERN = 4; // special: (center OR right) with far-right on white
+const int COND_STAGE9_TO_11_WHITE_PATTERN = 4;    // special, empirically tuned stage-9->11 pattern
+const int COND_STAGE14_ROTATE_360_LEFT_WHITE = 5; // stage 14 -> 15: ~360deg rotation and left sensor on white
 
 // Stage-entry turn hint (used at the beginning of selected stages)
 const int TURN_NONE = 0;
@@ -149,6 +150,16 @@ const unsigned long POST_FORCED_TURN_DISTRACT_BLOCK_MS = 100;
 const unsigned long ENTRY_SENSOR_STEER_BLOCK_MS = 300;
 const unsigned long ENTRY_SENSOR_STEER_BLOCK_LONG_MS = 500;
 const unsigned long FAR_RIGHT_CORRECTION_POST_CENTER_MS = 75;
+
+// Approximate heading tracker for stage 9.
+// Positive heading = right, negative heading = left.
+const unsigned long STAGE9_HEADING_ZERO_DELAY_AFTER_INITIAL_MS = 250;
+const unsigned long APPROX_TURN_90_DEG_TIME_MS = 250;  // tuneable: ~time to rotate 90 deg while steering
+const float APPROX_HEADING_MIN_DEG = -90.0;
+const float APPROX_HEADING_MAX_DEG = 90.0;
+const float STAGE9_TURN_DETECT_DEG = 80.0;             // crossing threshold around heading=0 for stage-9 L/R swing counting
+const float HEADING_ROUGH_LEFT_THRESHOLD_DEG = 12.0;   // if <= -threshold, treat as still left
+const float STAGE14_ROTATE_APPROX_DEG = 330.0;         // stage 14 completion threshold (approx 360)
 
 const int STATE_ACTION[19] = {
   ACT_STOP,
@@ -214,7 +225,7 @@ const int INTERVAL_TRANSITION_CONDITION[19] = {
   COND_JUNCTION_WHITE,   // 11 -> arrive 12
   COND_JUNCTION_WHITE,   // 12 -> arrive 13
   COND_JUNCTION_WHITE,   // 13 -> arrive 14
-  COND_JUNCTION_WHITE,   // 14 -> arrive 15
+  COND_STAGE14_ROTATE_360_LEFT_WHITE, // 14 -> arrive 15
   COND_JUNCTION_WHITE,   // 15 -> arrive 16
   COND_JUNCTION_WHITE,   // 16 -> arrive 17
   COND_TIME_ONLY,        // 17 -> arrive 18 (custom logic in runMissionMode)
@@ -269,11 +280,125 @@ int lastMissionState = 0;
 bool stage17BumperTriggered = false;
 bool debugStageStopActive = false;
 
+float approxHeadingDeg = 0.0;
+bool stage9HeadingZeroed = false;
+int stage9HeadingTurnCount = 0; // counts detected swings in sequence: L, R, L, R, L (target = 5)
+unsigned long headingLastUpdateMs = 0;
+bool headingSteeringBlockActive = false;
+int headingSteeringBlockTurn = TURN_NONE; // TURN_LEFT blocks left steering, TURN_RIGHT blocks right steering
+bool stage14HeadingTrackingActive = false;
+float stage14AccumulatedTurnDeg = 0.0;
+
 float clampPower(float p)
 {
   if (p < 0.0) return 0.0;
   if (p > 1.0) return 1.0;
   return p;
+}
+
+float clampHeadingDeg(float h)
+{
+  if (h < APPROX_HEADING_MIN_DEG) return APPROX_HEADING_MIN_DEG;
+  if (h > APPROX_HEADING_MAX_DEG) return APPROX_HEADING_MAX_DEG;
+  return h;
+}
+
+void clearHeadingSteeringBlock()
+{
+  headingSteeringBlockActive = false;
+  headingSteeringBlockTurn = TURN_NONE;
+}
+
+void resetStage9HeadingTracking()
+{
+  approxHeadingDeg = 0.0;
+  stage9HeadingZeroed = false;
+  stage9HeadingTurnCount = 0;
+  headingLastUpdateMs = millis();
+  clearHeadingSteeringBlock();
+}
+
+void resetStage14HeadingTracking()
+{
+  stage14HeadingTrackingActive = false;
+  stage14AccumulatedTurnDeg = 0.0;
+}
+
+float getApproxTurnDeltaDeg(int steeringTurn, unsigned long dtMs)
+{
+  if ((steeringTurn != TURN_LEFT && steeringTurn != TURN_RIGHT) || dtMs == 0) {
+    return 0.0;
+  }
+
+  unsigned long turn90Ms = scaledDurationMs(APPROX_TURN_90_DEG_TIME_MS);
+  if (turn90Ms == 0) turn90Ms = 1;
+
+  float degPerMs = 90.0 / (float)turn90Ms;
+  float delta = degPerMs * (float)dtMs;
+  return (steeringTurn == TURN_LEFT) ? -delta : delta;
+}
+
+void updateStage9ApproxHeading(int steeringTurn)
+{
+  if (currentState != 9 || !stage9HeadingZeroed || headingSteeringBlockActive) {
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (headingLastUpdateMs == 0) {
+    headingLastUpdateMs = nowMs;
+    return;
+  }
+
+  unsigned long dtMs = nowMs - headingLastUpdateMs;
+  headingLastUpdateMs = nowMs;
+
+  float prevHeading = approxHeadingDeg;
+  float delta = getApproxTurnDeltaDeg(steeringTurn, dtMs);
+  if (delta != 0.0) {
+    approxHeadingDeg = clampHeadingDeg(approxHeadingDeg + delta);
+  }
+
+  if (stage9HeadingTurnCount < 5) {
+    // Alternate threshold crossing relative to heading=0: left, right, left, right, left.
+    int expectedTurn = (stage9HeadingTurnCount % 2 == 0) ? TURN_LEFT : TURN_RIGHT;
+    bool crossedLeft = (prevHeading > -STAGE9_TURN_DETECT_DEG && approxHeadingDeg <= -STAGE9_TURN_DETECT_DEG);
+    bool crossedRight = (prevHeading < STAGE9_TURN_DETECT_DEG && approxHeadingDeg >= STAGE9_TURN_DETECT_DEG);
+
+    if (expectedTurn == TURN_LEFT && crossedLeft) {
+      stage9HeadingTurnCount = stage9HeadingTurnCount + 1;
+    }
+    else if (expectedTurn == TURN_RIGHT && crossedRight) {
+      stage9HeadingTurnCount = stage9HeadingTurnCount + 1;
+    }
+
+    if (stage9HeadingTurnCount >= 5) {
+      headingSteeringBlockActive = true;
+      // After final left: if still roughly left, block left; otherwise block right.
+      // This avoids further right-turn drifting when heading is not left anymore.
+      headingSteeringBlockTurn = (approxHeadingDeg <= -HEADING_ROUGH_LEFT_THRESHOLD_DEG) ? TURN_LEFT : TURN_RIGHT;
+    }
+  }
+}
+
+void updateStage14ApproxHeading(int steeringTurn)
+{
+  if (currentState != 14 || !stage14HeadingTrackingActive) {
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (headingLastUpdateMs == 0) {
+    headingLastUpdateMs = nowMs;
+    return;
+  }
+
+  unsigned long dtMs = nowMs - headingLastUpdateMs;
+  headingLastUpdateMs = nowMs;
+
+  float delta = getApproxTurnDeltaDeg(steeringTurn, dtMs);
+  if (delta < 0.0) delta = -delta;
+  stage14AccumulatedTurnDeg = stage14AccumulatedTurnDeg + delta;
 }
 
 int readBinaryStable(int pin)
@@ -328,6 +453,33 @@ void onMissionStateEnter(int state)
 
   if (state == 17) {
     stage17BumperTriggered = false;
+  }
+
+  if (state == 9) {
+    resetStage14HeadingTracking();
+    resetStage9HeadingTracking();
+  }
+  else if (state == 11) {
+    // Keep heading steering block (if armed in stage 9) for all of stage 11.
+    resetStage14HeadingTracking();
+    headingLastUpdateMs = millis();
+  }
+  else if (state == 14) {
+    approxHeadingDeg = 0.0;
+    stage9HeadingZeroed = false;
+    stage9HeadingTurnCount = 0;
+    clearHeadingSteeringBlock();
+    resetStage14HeadingTracking();
+    headingLastUpdateMs = 0;
+  }
+  else if (state != 10) {
+    // Stage 10 is a dummy pass-through. Clear heading-related effects once stage 11 is finished.
+    approxHeadingDeg = 0.0;
+    stage9HeadingZeroed = false;
+    stage9HeadingTurnCount = 0;
+    headingLastUpdateMs = 0;
+    clearHeadingSteeringBlock();
+    resetStage14HeadingTracking();
   }
 
   clearFarRightCorrection();
@@ -453,7 +605,7 @@ void setEntryTurnRightAggressive(bool stabilize)
   setWheelPower(POWER_MAX, POWER_FULL);
 }
 
-void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAfterTurn, bool stabilize, bool blockLeftSensorForSteering, bool blockRightSensorForSteering)
+int runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAfterTurn, bool stabilize, bool blockLeftSensorForSteering, bool blockRightSensorForSteering)
 {
   refreshTrackingSensors();
 
@@ -467,13 +619,13 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
     clearFarRightCorrection();
     setEntryTurnLeftAggressive(stabilize);
     lastTurn = -1;
-    return;
+    return TURN_LEFT;
   }
   if (forcedTurn == TURN_RIGHT) {
     clearFarRightCorrection();
     setEntryTurnRightAggressive(stabilize);
     lastTurn = 1;
-    return;
+    return TURN_RIGHT;
   }
 
   // After forced turn ends, keep going straight for a short window.
@@ -482,7 +634,7 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
     setForwardDirection();
     setForwardDirection();
     setWheelPower(cruisePower, cruisePower);
-    return;
+    return TURN_NONE;
   }
 
   bool inFarRightStages = (currentState == 9 || currentState == 14);
@@ -513,12 +665,13 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
         if (farRightCorrectionTurn == TURN_RIGHT) {
           setSteerRightForCruise(cruisePower, stabilize);
           lastTurn = 1;
+          return TURN_RIGHT;
         }
         else {
           setSteerLeftForCruise(cruisePower, stabilize);
           lastTurn = -1;
+          return TURN_LEFT;
         }
-        return;
       }
     }
 
@@ -526,13 +679,13 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
       startFarRightCorrection(TURN_RIGHT);
       setSteerRightForCruise(cruisePower, stabilize);
       lastTurn = 1;
-      return;
+      return TURN_RIGHT;
     }
     if (leftSensor == 1 && centerSensor == 1 && rightSensor == 1) {
       startFarRightCorrection(TURN_LEFT);
       setSteerLeftForCruise(cruisePower, stabilize);
       lastTurn = -1;
-      return;
+      return TURN_LEFT;
     }
   }
 
@@ -541,41 +694,49 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
     if (steerLeftSensor == 0 && steerRightSensor == 1) {
       setSteerLeftForCruise(cruisePower, stabilize);
       lastTurn = -1;
+      return TURN_LEFT;
     }
     else if (steerLeftSensor == 1 && steerRightSensor == 0) {
       setSteerRightForCruise(cruisePower, stabilize);
       lastTurn = 1;
+      return TURN_RIGHT;
     }
     else {
       setForwardDirection();
       setForwardDirection();
       setWheelPower(cruisePower, cruisePower);
       // keep lastTurn memory while centered to avoid introducing turn bias
+      return TURN_NONE;
     }
   }
   else {
     if (steerLeftSensor == 0 && steerRightSensor == 1) {
       setSteerLeftForCruise(cruisePower, stabilize);
       lastTurn = -1;
+      return TURN_LEFT;
     }
     else if (steerLeftSensor == 1 && steerRightSensor == 0) {
       setSteerRightForCruise(cruisePower, stabilize);
       lastTurn = 1;
+      return TURN_RIGHT;
     }
     else {
       // search by last known direction using cruise-dependent steering rule
       // if lastTurn is unknown (0), do neutral forward probing first
       if (lastTurn < 0) {
         setSteerLeftForCruise(cruisePower, stabilize);
+        return TURN_LEFT;
       }
       else if (lastTurn > 0) {
         setSteerRightForCruise(cruisePower, stabilize);
+        return TURN_RIGHT;
       }
       else {
         // startup/unknown case: avoid hard left bias, keep tracking forward
         setForwardDirection();
         setForwardDirection();
         setWheelPower(cruisePower, cruisePower);
+        return TURN_NONE;
       }
     }
   }
@@ -601,9 +762,12 @@ bool transitionConditionMet(int state)
     return (bumperSensor == 0);
   }
   if (cond == COND_STAGE9_TO_11_WHITE_PATTERN) {
-    // requested special transition for 9 -> 11 path:
-    // require far-right white AND (center white OR right white)
+    // Empirical stage-9->11 pattern (kept as requested):
+    // (left+right white) OR ((left white OR center dark) AND far-right white)
     return (leftSensor == 0 && rightSensor == 0) || ((leftSensor == 0 || centerSensor == 1) && farRightSensor == 0);
+  }
+  if (cond == COND_STAGE14_ROTATE_360_LEFT_WHITE) {
+    return stage14HeadingTrackingActive && stage14AccumulatedTurnDeg >= STAGE14_ROTATE_APPROX_DEG && leftSensor == 0;
   }
 
   return true;
@@ -650,6 +814,31 @@ void runMissionMode()
     int entryTurn = STAGE_ENTRY_TURN[currentState];
     bool useEntrySensorBlockMethod = (currentState == 11 || currentState == 12);
 
+    unsigned long entryTurnDur = scaledDurationMs(getEntryTurnDurationMs(currentState));
+    unsigned long distractBlockDur = scaledDurationMs(POST_FORCED_TURN_DISTRACT_BLOCK_MS);
+
+    if (currentState == 9 && !stage9HeadingZeroed) {
+      // Start heading reference only after stage-9 initial actions complete,
+      // then wait an extra delay before zeroing heading.
+      unsigned long zeroDelayMs = scaledDurationMs(STAGE9_HEADING_ZERO_DELAY_AFTER_INITIAL_MS);
+      unsigned long zeroAtMs = entryTurnDur + distractBlockDur + zeroDelayMs;
+      if (elapsedInState >= zeroAtMs) {
+        approxHeadingDeg = 0.0;
+        stage9HeadingZeroed = true;
+        headingLastUpdateMs = millis();
+      }
+    }
+
+    if (currentState == 14 && !stage14HeadingTrackingActive) {
+      // Start stage-14 heading tracking right after initial entry actions are done.
+      unsigned long startAtMs = entryTurnDur + distractBlockDur;
+      if (elapsedInState >= startAtMs) {
+        stage14HeadingTrackingActive = true;
+        stage14AccumulatedTurnDeg = 0.0;
+        headingLastUpdateMs = millis();
+      }
+    }
+
     bool blockLeftSensorForSteering = false;
     bool blockRightSensorForSteering = false;
     if (useEntrySensorBlockMethod
@@ -670,8 +859,15 @@ void runMissionMode()
       entryTurn = TURN_NONE;
     }
 
-    unsigned long entryTurnDur = scaledDurationMs(getEntryTurnDurationMs(currentState));
-    unsigned long distractBlockDur = scaledDurationMs(POST_FORCED_TURN_DISTRACT_BLOCK_MS);
+    if (headingSteeringBlockActive && (currentState == 9 || currentState == 11)) {
+      if (headingSteeringBlockTurn == TURN_LEFT) {
+        blockLeftSensorForSteering = true;
+      }
+      else if (headingSteeringBlockTurn == TURN_RIGHT) {
+        blockRightSensorForSteering = true;
+      }
+    }
+
     bool stabilize = (elapsedInState < entryTurnDur || (currentState != 5 && currentState != 9 && currentState != 14));
 
     int forcedTurn = TURN_NONE;
@@ -681,7 +877,9 @@ void runMissionMode()
 
     bool forceStraightAfterTurn = (entryTurn != TURN_NONE && elapsedInState >= entryTurnDur && elapsedInState < (entryTurnDur + distractBlockDur));
 
-    runLineTrackSimple(cruise, forcedTurn, forceStraightAfterTurn, stabilize, blockLeftSensorForSteering, blockRightSensorForSteering);
+    int steeringTurn = runLineTrackSimple(cruise, forcedTurn, forceStraightAfterTurn, stabilize, blockLeftSensorForSteering, blockRightSensorForSteering);
+    updateStage9ApproxHeading(steeringTurn);
+    updateStage14ApproxHeading(steeringTurn);
   }
   else if (action == ACT_SPIN_360_RIGHT) {
     digitalWrite(pinL_DIR, HIGH);
@@ -695,7 +893,7 @@ void runMissionMode()
     // - after bumper trigger: go backward until stage-18 white line is detected
     if (!stage17BumperTriggered) {
       setForwardDirection();
-      runLineTrackSimple(POWER_FULL, TURN_NONE, false, true, false, false);
+      (void)runLineTrackSimple(POWER_FULL, TURN_NONE, false, true, false, false);
       bumperSensor = readBinaryStable(pinB_Sensor);
       if (bumperSensor == 0) {
         stage17BumperTriggered = true;
@@ -737,7 +935,8 @@ void runMissionMode()
   }
 
   bool shouldAdvance = transitionConditionMet(currentState);
-  if (!shouldAdvance && elapsedInState >= maxDur) {
+  bool allowForcedAdvanceAtMax = (INTERVAL_TRANSITION_CONDITION[currentState] != COND_STAGE14_ROTATE_360_LEFT_WHITE);
+  if (!shouldAdvance && elapsedInState >= maxDur && allowForcedAdvanceAtMax) {
     shouldAdvance = true;
   }
 
@@ -832,7 +1031,7 @@ void loop() {
   // mode 1: simple line tracking
   if (RUN_MODE == MODE_LINE_TRACK) {
     setForwardDirection();
-    runLineTrackSimple(POWER_FULL, TURN_NONE, false, true, false, false);
+    (void)runLineTrackSimple(POWER_FULL, TURN_NONE, false, true, false, false);
     return;
   }
 
