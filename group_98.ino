@@ -23,7 +23,7 @@ const int DEBUG_START_AT_STAGE = 9; // SET TO 3!!!!!
 // Debug stage stop (mission mode only):
 // Any value outside 3..18 = disabled
 // N (3..18) = stop completely once stage N is entered
-const int DEBUG_STOP_AT_STAGE = 19; // SET TO 19!!!
+const int DEBUG_STOP_AT_STAGE = 18; // SET TO 19!!!
 
 // Six effective power levels only: stop / quarter / half low / half / full / max
 const float POWER_STOP = 0.0;
@@ -65,16 +65,16 @@ const unsigned long INTERVAL_MIN_DURATION_MS[19] = {
   1400,  // 6
   950,  // 7 (self-rotation only)
   1200,  // 8 (post-self-rotation causes variation)
-  8500,   // 9  (retuned after slow->half mapping)
-  500,  // 10
-  800,   // 11
-  1200,   // 12
-  2600,   // 13
-  900,   // 14 (retuned after slow->half mapping)
-  1300,   // 15
-  1400,  // 16
-  700,  // 17
-  1100   // 18
+  9333,   // 9  (retuned after slow->half mapping)
+  0,  // 10
+  400,   // 11
+  600,   // 12
+  1000,   // 13
+  3000,   // 14 (retuned after slow->half mapping)
+  1000,   // 15
+  1500,  // 16
+  1500,  // 17
+  100   // 18
 };
 
 const unsigned long INTERVAL_MAX_DURATION_MS[19] = {
@@ -87,16 +87,16 @@ const unsigned long INTERVAL_MAX_DURATION_MS[19] = {
   2000,  // 6
   1050,  // 7 (self-rotation only)
   1800,  // 8 (post-self-rotation causes variation)
-  13000,   // 9  (retuned after slow->half mapping)
-  1000,  // 10
-  1200,  // 11
-  1400,  // 12
-  3000,  // 13
-  1100,   // 14 (retuned after slow->half mapping)
-  1600,  // 15
-  1800,  // 16
-  900,  // 17
-  1300   // 18
+  11333,   // 9  (retuned after slow->half mapping)
+  0,  // 10
+  800,  // 11
+  1100,  // 12
+  2500,  // 13
+  3750,   // 14 (retuned after slow->half mapping)
+  2500,  // 15
+  2000,  // 16
+  2000,  // 17
+  400   // 18
 };
 
 // Cumulative time to REACH each stage point (seconds, before global multiplier)
@@ -132,6 +132,7 @@ const int COND_TIME_ONLY = 0;
 const int COND_CENTER_ON_WHITE = 1;
 const int COND_JUNCTION_WHITE = 2;  // use left and right sensors only, ignore center (requested junction condition)
 const int COND_BUMPER_ON_WHITE = 3;
+const int COND_STAGE9_TO_11_WHITE_PATTERN = 4; // special: (center OR right) with far-right on white
 
 // Stage-entry turn hint (used at the beginning of selected stages)
 const int TURN_NONE = 0;
@@ -139,11 +140,15 @@ const int TURN_LEFT = -1;
 const int TURN_RIGHT = 1;
 
 // Time for entry turn bias at stage start (before normal line tracking resumes)
-const unsigned long ENTRY_TURN_DURATION_MS = 160;
+const unsigned long ENTRY_TURN_DURATION_SHORT_MS = 100;
+const unsigned long ENTRY_TURN_DURATION_MS = 150;
 const unsigned long ENTRY_TURN_DURATION_LONG_MS = 240;
 
 // After forced stage-entry turn ends, temporarily force straight driving.
-const unsigned long POST_FORCED_TURN_DISTRACT_BLOCK_MS = 150;
+const unsigned long POST_FORCED_TURN_DISTRACT_BLOCK_MS = 100;
+const unsigned long ENTRY_SENSOR_STEER_BLOCK_MS = 300;
+const unsigned long ENTRY_SENSOR_STEER_BLOCK_LONG_MS = 500;
+const unsigned long FAR_RIGHT_CORRECTION_POST_CENTER_MS = 75;
 
 const int STATE_ACTION[19] = {
   ACT_STOP,
@@ -156,7 +161,7 @@ const int STATE_ACTION[19] = {
   ACT_SPIN_360_RIGHT,     // 7
   ACT_LINE_TRACK,         // 8
   ACT_LINE_TRACK,         // 9
-  ACT_LINE_TRACK,         // 10
+  ACT_STOP,               // 10 (dummy stage, instant pass-through)
   ACT_LINE_TRACK,         // 11
   ACT_LINE_TRACK,         // 12
   ACT_LINE_TRACK,         // 13
@@ -204,8 +209,8 @@ const int INTERVAL_TRANSITION_CONDITION[19] = {
   COND_JUNCTION_WHITE,   // 6 -> arrive 7
   COND_JUNCTION_WHITE,   // 7 (self-rotation)
   COND_JUNCTION_WHITE,   // 8 -> arrive 9
-  COND_TIME_ONLY,        // 9
-  COND_JUNCTION_WHITE,   // 10 -> arrive 11
+  COND_STAGE9_TO_11_WHITE_PATTERN, // 9 -> (10 dummy) -> 11
+  COND_TIME_ONLY,        // 10 -> arrive 11 (dummy stage, immediate)
   COND_JUNCTION_WHITE,   // 11 -> arrive 12
   COND_JUNCTION_WHITE,   // 12 -> arrive 13
   COND_JUNCTION_WHITE,   // 13 -> arrive 14
@@ -223,6 +228,7 @@ const int pinL_Sensor = A5;      //pin A5: left tracking sensor
 const int pinB_Sensor = A4;      //pin A4: bumper sensor
 const int pinR_Sensor = A3;      //pin A3: right tracking sensor
 const int pinC_Sensor = A2;      //pin A2: center tracking sensor
+const int pinFR_Sensor = A1;     //pin A1: far-right tracking sensor (stage 9/14 special use)
 
 const int pinL_PWM = 9;          //pin D9: left motor speed
 const int pinL_DIR = 10;         //pin D10: left motor direction
@@ -236,6 +242,12 @@ int leftSensor = 1;    // 1 = dark, 0 = white
 int bumperSensor = 1;  // 1 = dark, 0 = white (reserved for start/end marker)
 int centerSensor = 1;  // 1 = dark, 0 = white
 int rightSensor = 1;   // 1 = dark, 0 = white
+int farRightSensor = 1; // 1 = dark, 0 = white (used only in stage 9/14 rule)
+
+bool farRightCorrectionActive = false;
+int farRightCorrectionTurn = TURN_NONE;
+bool farRightCorrectionCenterSeen = false;
+unsigned long farRightCorrectionPostCenterStartMs = 0;
 
 int currentState = 0;   // mission interval index [currentState -> currentState+1]; set to 3 when mission starts
 
@@ -284,11 +296,28 @@ void refreshTrackingSensors()
   leftSensor = readBinaryStable(pinL_Sensor);
   centerSensor = readBinaryStable(pinC_Sensor);
   rightSensor = readBinaryStable(pinR_Sensor);
+  farRightSensor = readBinaryStable(pinFR_Sensor);
 }
 
 bool areAllTrackingSensorsOnWhite()
 {
   return (leftSensor == 0 && centerSensor == 0 && rightSensor == 0);
+}
+
+void clearFarRightCorrection()
+{
+  farRightCorrectionActive = false;
+  farRightCorrectionTurn = TURN_NONE;
+  farRightCorrectionCenterSeen = false;
+  farRightCorrectionPostCenterStartMs = 0;
+}
+
+void startFarRightCorrection(int turnDir)
+{
+  farRightCorrectionActive = true;
+  farRightCorrectionTurn = turnDir;
+  farRightCorrectionCenterSeen = (centerSensor == 0);
+  farRightCorrectionPostCenterStartMs = farRightCorrectionCenterSeen ? millis() : 0;
 }
 
 void onMissionStateEnter(int state)
@@ -300,6 +329,8 @@ void onMissionStateEnter(int state)
   if (state == 17) {
     stage17BumperTriggered = false;
   }
+
+  clearFarRightCorrection();
 }
 
 float getMissionCruisePower(int intervalState)
@@ -310,15 +341,22 @@ float getMissionCruisePower(int intervalState)
   // - between 9 and 10 => interval state 9 => half low
   // - between 14 and 15 => interval state 14 => half
   if (intervalState == 5) return POWER_HALF;
-  if (intervalState == 9) return POWER_HALF_LOW;
+  if (intervalState == 9) return POWER_HALF;
+  // if (intervalState == 11) return POWER_HALF;
+  // if (intervalState == 12) return POWER_HALF;
   if (intervalState == 14) return POWER_HALF;
   return POWER_FULL;
 }
 
 unsigned long getEntryTurnDurationMs(int state)
 {
-  // Keep 150 ms for stages 4, 5, 6, 11, 12.
-  if (state == 4 || state == 5 || state == 6 || state == 11 || state == 12) {
+  // Keep 100 ms for stage 11.
+  if (state == 11) {
+    return ENTRY_TURN_DURATION_SHORT_MS;
+  }
+
+  // Keep 150 ms for stages 4, 5, 6, 12.
+  if (state == 4 || state == 5 || state == 6 || state == 12) {
     return ENTRY_TURN_DURATION_MS;
   }
 
@@ -415,18 +453,24 @@ void setEntryTurnRightAggressive(bool stabilize)
   setWheelPower(POWER_MAX, POWER_FULL);
 }
 
-void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAfterTurn, bool stabilize)
+void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAfterTurn, bool stabilize, bool blockLeftSensorForSteering, bool blockRightSensorForSteering)
 {
   refreshTrackingSensors();
+
+  // Entry steering-bias method: block selected side sensor(s) for steering decisions only.
+  int steerLeftSensor = blockLeftSensorForSteering ? 1 : leftSensor;
+  int steerRightSensor = blockRightSensorForSteering ? 1 : rightSensor;
 
   // Optional forced entry-turn for mission decision points.
   // This keeps mode1 and mode2 on the same tracking function.
   if (forcedTurn == TURN_LEFT) {
+    clearFarRightCorrection();
     setEntryTurnLeftAggressive(stabilize);
     lastTurn = -1;
     return;
   }
   if (forcedTurn == TURN_RIGHT) {
+    clearFarRightCorrection();
     setEntryTurnRightAggressive(stabilize);
     lastTurn = 1;
     return;
@@ -434,19 +478,71 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
 
   // After forced turn ends, keep going straight for a short window.
   if (forceStraightAfterTurn) {
+    clearFarRightCorrection();
     setForwardDirection();
     setForwardDirection();
     setWheelPower(cruisePower, cruisePower);
     return;
   }
 
+  bool inFarRightStages = (currentState == 9 || currentState == 14);
+  if (!inFarRightStages) {
+    clearFarRightCorrection();
+  }
+
+  // Far-right sensor override is used only in stage 9 and 14.
+  // Rule:
+  // - if far-right sensor sees white, turn right
+  // - else if far-right is not white and no main tracking sensor sees white, turn left
+  // - otherwise ignore far-right and continue normal tracking logic
+  if (inFarRightStages) {
+    if (farRightCorrectionActive) {
+      if (!farRightCorrectionCenterSeen) {
+        if (centerSensor == 0) {
+          farRightCorrectionCenterSeen = true;
+          farRightCorrectionPostCenterStartMs = millis();
+        }
+      }
+      else {
+        if ((millis() - farRightCorrectionPostCenterStartMs) >= FAR_RIGHT_CORRECTION_POST_CENTER_MS) {
+          clearFarRightCorrection();
+        }
+      }
+
+      if (farRightCorrectionActive) {
+        if (farRightCorrectionTurn == TURN_RIGHT) {
+          setSteerRightForCruise(cruisePower, stabilize);
+          lastTurn = 1;
+        }
+        else {
+          setSteerLeftForCruise(cruisePower, stabilize);
+          lastTurn = -1;
+        }
+        return;
+      }
+    }
+
+    if (farRightSensor == 0) {
+      startFarRightCorrection(TURN_RIGHT);
+      setSteerRightForCruise(cruisePower, stabilize);
+      lastTurn = 1;
+      return;
+    }
+    if (leftSensor == 1 && centerSensor == 1 && rightSensor == 1) {
+      startFarRightCorrection(TURN_LEFT);
+      setSteerLeftForCruise(cruisePower, stabilize);
+      lastTurn = -1;
+      return;
+    }
+  }
+
   // 0 = white line, 1 = dark background
   if (centerSensor == 0) {
-    if (leftSensor == 0 && rightSensor == 1) {
+    if (steerLeftSensor == 0 && steerRightSensor == 1) {
       setSteerLeftForCruise(cruisePower, stabilize);
       lastTurn = -1;
     }
-    else if (leftSensor == 1 && rightSensor == 0) {
+    else if (steerLeftSensor == 1 && steerRightSensor == 0) {
       setSteerRightForCruise(cruisePower, stabilize);
       lastTurn = 1;
     }
@@ -458,11 +554,11 @@ void runLineTrackSimple(float cruisePower, int forcedTurn, bool forceStraightAft
     }
   }
   else {
-    if (leftSensor == 0 && rightSensor == 1) {
+    if (steerLeftSensor == 0 && steerRightSensor == 1) {
       setSteerLeftForCruise(cruisePower, stabilize);
       lastTurn = -1;
     }
-    else if (leftSensor == 1 && rightSensor == 0) {
+    else if (steerLeftSensor == 1 && steerRightSensor == 0) {
       setSteerRightForCruise(cruisePower, stabilize);
       lastTurn = 1;
     }
@@ -499,10 +595,15 @@ bool transitionConditionMet(int state)
   }
   if (cond == COND_JUNCTION_WHITE) {
     // requested: left and right sensors both white (junction)
-    return (leftSensor == 0 && rightSensor == 0);
+    return (leftSensor == 0 && rightSensor == 0) || (leftSensor == 0 && farRightSensor == 0);
   }
   if (cond == COND_BUMPER_ON_WHITE) {
     return (bumperSensor == 0);
+  }
+  if (cond == COND_STAGE9_TO_11_WHITE_PATTERN) {
+    // requested special transition for 9 -> 11 path:
+    // require far-right white AND (center white OR right white)
+    return (leftSensor == 0 && rightSensor == 0) || ((leftSensor == 0 || centerSensor == 1) && farRightSensor == 0);
   }
 
   return true;
@@ -547,6 +648,28 @@ void runMissionMode()
   else if (action == ACT_LINE_TRACK) {
     float cruise = getMissionCruisePower(currentState);
     int entryTurn = STAGE_ENTRY_TURN[currentState];
+    bool useEntrySensorBlockMethod = (currentState == 11 || currentState == 12);
+
+    bool blockLeftSensorForSteering = false;
+    bool blockRightSensorForSteering = false;
+    if (useEntrySensorBlockMethod
+    && ((currentState == 11 && elapsedInState < scaledDurationMs(ENTRY_SENSOR_STEER_BLOCK_MS))
+    || (currentState == 12 && elapsedInState < scaledDurationMs(ENTRY_SENSOR_STEER_BLOCK_LONG_MS)))) {
+      if (entryTurn == TURN_LEFT) {
+        // force-left by blocking right sensor from steering logic
+        blockRightSensorForSteering = true;
+      }
+      else if (entryTurn == TURN_RIGHT) {
+        // force-right by blocking left sensor from steering logic
+        blockLeftSensorForSteering = true;
+      }
+    }
+
+    if (useEntrySensorBlockMethod) {
+      // requested for transitions into 11 and 12: no aggressive forced-turn pulse.
+      entryTurn = TURN_NONE;
+    }
+
     unsigned long entryTurnDur = scaledDurationMs(getEntryTurnDurationMs(currentState));
     unsigned long distractBlockDur = scaledDurationMs(POST_FORCED_TURN_DISTRACT_BLOCK_MS);
     bool stabilize = (elapsedInState < entryTurnDur || (currentState != 5 && currentState != 9 && currentState != 14));
@@ -558,7 +681,7 @@ void runMissionMode()
 
     bool forceStraightAfterTurn = (entryTurn != TURN_NONE && elapsedInState >= entryTurnDur && elapsedInState < (entryTurnDur + distractBlockDur));
 
-    runLineTrackSimple(cruise, forcedTurn, forceStraightAfterTurn, stabilize);
+    runLineTrackSimple(cruise, forcedTurn, forceStraightAfterTurn, stabilize, blockLeftSensorForSteering, blockRightSensorForSteering);
   }
   else if (action == ACT_SPIN_360_RIGHT) {
     digitalWrite(pinL_DIR, HIGH);
@@ -572,7 +695,7 @@ void runMissionMode()
     // - after bumper trigger: go backward until stage-18 white line is detected
     if (!stage17BumperTriggered) {
       setForwardDirection();
-      runLineTrackSimple(POWER_FULL, TURN_NONE, false, true);
+      runLineTrackSimple(POWER_FULL, TURN_NONE, false, true, false, false);
       bumperSensor = readBinaryStable(pinB_Sensor);
       if (bumperSensor == 0) {
         stage17BumperTriggered = true;
@@ -623,6 +746,16 @@ void runMissionMode()
     if (currentState > 18) {
       currentState = 18;
     }
+
+    // Cleanly skip zero-time dummy states (e.g., stage 10) without executing them.
+    while (currentState < 18 &&
+           INTERVAL_MIN_DURATION_MS[currentState] == 0 &&
+           INTERVAL_MAX_DURATION_MS[currentState] == 0 &&
+           INTERVAL_TRANSITION_CONDITION[currentState] == COND_TIME_ONLY &&
+           STATE_ACTION[currentState] == ACT_STOP) {
+      currentState = currentState + 1;
+    }
+
     missionStateStartMs = millis();
   }
 }
@@ -636,6 +769,7 @@ void setup ()
   pinMode(pinB_Sensor, INPUT);
   pinMode(pinC_Sensor, INPUT);
   pinMode(pinR_Sensor, INPUT);
+  pinMode(pinFR_Sensor, INPUT);
   
   pinMode(pinL_DIR, OUTPUT);
   pinMode(pinR_DIR, OUTPUT);
@@ -698,7 +832,7 @@ void loop() {
   // mode 1: simple line tracking
   if (RUN_MODE == MODE_LINE_TRACK) {
     setForwardDirection();
-    runLineTrackSimple(POWER_FULL, TURN_NONE, false, true);
+    runLineTrackSimple(POWER_FULL, TURN_NONE, false, true, false, false);
     return;
   }
 
