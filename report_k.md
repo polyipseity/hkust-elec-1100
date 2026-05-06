@@ -35,7 +35,7 @@ For the PWM, we set a “POWER_FULL” variable, and it is 0.84 on default (whic
 
 These values are set to ensure the car does not go off tracks easily, and we can take control of the car easily. Lastly, the Logic Flow Chart in next page:
 
-# View this in mermaid
+
 ```
 graph TD
     %% Styling
