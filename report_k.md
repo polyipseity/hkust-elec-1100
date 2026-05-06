@@ -25,13 +25,14 @@ Functions\
 -	runLineTrackSimple(...): The core line-following algorithm. It reads the array of 5 tracking sensors. If the car wanders, it triggers the appropriate “setSteer...” function to correct it. However, since the car may overrun and the time limit does not allow the car to wander too long, we decided to do a force transistion. It accepts “forcedTurn” commands from the tracker to blindly turn at specific stage junctions regardless of sensor input. This can ensure that in specific time, it could transit to the next stage earlier for time shortening.\
 -	runMissionMode(): The main loop of the project. It tracks how long the car has been in a specific stage, executes the assigned action (“ACT_LINE_TRACK”, “ACT_SPIN_360_RIGHT”, etc.), and checks “transitionConditionMet” to advance the code to the next task.
 PWM\
-For the PWM, we set a “POWER_FULL” variable, and it is 0.84 on default (which multiply by 255 and scales to 214). This default value ensures the car can beat the 35s limit, while retaining enough control to stay on the track. Furthermore, as introduced above, the left motor is slightly faster than right motor and their value is found that left motor is faster than right motor by 1.054. Hence, we set a “RIGHT_PWM_MULTIPLIER” variable as 1.054 to force the right motor spinning the same speed as left motor, and the following table shows the PWM values we take for each track.
+For the PWM, we set a “POWER_FULL” variable, and it is 0.84 on default (which multiply by 255 and scales to 214). This default value ensures the car can beat the 35s limit, while retaining enough control to stay on the track. Furthermore, as introduced above, the left motor is slightly faster than right motor and their value is found that left motor is faster than right motor by 1.054. Hence, we set a “RIGHT_PWM_MULTIPLIER” variable as 1.054 to force the right motor spinning the same speed as left motor, and the following table shows the PWM values we take for each track.\
+
 | Track / Segment      | Targeted Power (POWER_FULL Value) | Scaled PWM (Left / Right) |
 |----------------------|-----------------------------------|---------------------------|
 | Straight / Long runs | 0.84                              | 214 / 225                 |
 | Turns                | 0.7                               | 178 / 188                 |
 | Loop / S-Curves      | 0.63                              | 160 / 169                 |
-| Final Reverse        | 0.948                             | 241 / 255                 |
+| Final Reverse        | 0.948                             | 241 / 255                 | \
 
 These values are set to ensure the car does not go off tracks easily, and we can take control of the car easily. Lastly, the Logic Flow Chart in next page:
 
